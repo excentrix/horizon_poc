@@ -137,3 +137,31 @@ class MemoryService:
         if student and "facts" in student:
             return student["facts"]
         return {"academic": {}, "career": {}, "personal": {}}
+    
+    async def get_recent_conversation_summaries(self, student_id: str, limit: int = 3):
+        """Get summaries of recent conversations for context"""
+        recent_convs = await self.get_recent_conversations(student_id, limit)
+        summaries = []
+        
+        for conv in recent_convs:
+            conv_id = str(conv["_id"])
+            history = self.get_message_history(conv_id)
+            messages = history.messages
+            
+            # Only include if there are actual messages
+            if len(messages) > 1:  # More than just system message
+                # Get timestamp
+                timestamp = conv.get("created_at", "unknown date")
+                if isinstance(timestamp, datetime):
+                    timestamp = timestamp.strftime("%Y-%m-%d")
+                
+                # Create summary
+                summary = {
+                    "id": conv_id,
+                    "date": timestamp,
+                    "message_count": len(messages),
+                    "preview": messages[-2].content[:100] + "..." if len(messages) >= 2 else ""
+                }
+                summaries.append(summary)
+        
+        return summaries

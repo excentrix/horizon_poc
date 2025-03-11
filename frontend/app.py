@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from app.services.mentor import MentorService
 from app.services.memory import MemoryService
 from app.models.student import Student
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
 
 # Initialize services
 memory_service = MemoryService()
@@ -185,3 +187,38 @@ else:
                             st.write(f"- {key.replace('_', ' ').title()}: {value['value']}")
                         else:
                             st.write(f"- {key.replace('_', ' ').title()}: {value}")
+                            
+        # Show previous conversations
+        st.subheader("Previous Conversations")
+        
+        # Get recent conversations
+        recent_conversations = asyncio.run(
+            memory_service.get_recent_conversation_summaries(st.session_state.student_id)
+        )
+        
+        if recent_conversations:
+            for conv in recent_conversations:
+                if conv["id"] == st.session_state.conversation_id:
+                    continue  # Skip current conversation
+                    
+                with st.expander(f"Conversation {conv['date']}"):
+                    st.write(conv["preview"])
+                    if st.button("Continue this conversation", key=f"cont_{conv['id']}"):
+                        st.session_state.conversation_id = conv["id"]
+                        # Load conversation history into messages
+                        history = memory_service.get_message_history(conv["id"])
+                        st.session_state.messages = [
+                            {"role": "user" if isinstance(msg, HumanMessage) else "assistant", 
+                            "content": msg.content}
+                            for msg in history.messages 
+                            if not isinstance(msg, SystemMessage)
+                        ]
+                        st.rerun()
+        else:
+            st.write("No previous conversations")
+        
+        # Add a button to start a new conversation
+        if st.button("Start New Conversation"):
+            st.session_state.conversation_id = None
+            st.session_state.messages = []
+            st.rerun()        

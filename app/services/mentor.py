@@ -84,6 +84,25 @@ class MentorService:
         
         # Get student information to include in the prompt
         student = await self.memory_service.get_student(student_id)
+        student_facts = student.get("facts", {})
+    
+        # Create a more detailed student context
+        student_context = f"""
+        STUDENT PROFILE:
+        Name: {student.get('name', 'Unknown')}
+        University: {student.get('university', 'Unknown')}
+        Program: {student.get('program', 'Unknown')}
+        Year: {student.get('year', 'Unknown')}
+        
+        ACADEMIC FACTS:
+        {self._format_facts(student_facts.get('academic', {}))}
+        
+        CAREER FACTS:
+        {self._format_facts(student_facts.get('career', {}))}
+        
+        PERSONAL FACTS:
+        {self._format_facts(student_facts.get('personal', {}))}
+        """
         student_info = f"STUDENT INFO:\n{json.dumps(student, default=str)}" if student else ""
         
         # Get conversation history
@@ -155,6 +174,14 @@ class MentorService:
         # Yield a special token to indicate the end and include the conversation ID
         yield f"<CONVERSATION_ID>{conversation_id}</CONVERSATION_ID>"
         
+    def _format_facts(self, facts_dict):
+        """Format fact dictionaries into readable text"""
+        formatted = []
+        for key, value in facts_dict.items():
+            fact_value = value.get('value', value) if isinstance(value, dict) else value
+            formatted.append(f"- {key.replace('_', ' ').title()}: {fact_value}")
+        return "\n".join(formatted)
+        
     async def get_last_conversation_id(self) -> str:
         """Get the ID of the last conversation used"""
         return self.last_conversation_id
@@ -167,3 +194,21 @@ class MentorService:
             await intelligence.extract_facts(student_id, conversation_id, message, response)
         except Exception as e:
             print(f"Error extracting facts: {e}")
+            
+
+
+    # def _prepare_context(self, student_id, history, message):
+        """Prepare a rich context for the LLM that includes relevant knowledge"""
+        # This method would retrieve and format:
+        # 1. Current student profile
+        # 2. Relevant facts from previous conversations
+        # 3. Summaries of related past conversations
+        # 4. The current conversation history
+        
+        # It would then determine what context is most relevant to the current query
+        # and format it appropriately for the LLM
+        
+        # For implementation details, this would likely require:
+        # - Vector storage for embeddings of past conversations
+        # - Semantic search to find relevant previous discussions
+        # - Context length management to fit within LLM token limits

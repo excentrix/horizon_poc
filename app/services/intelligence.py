@@ -5,12 +5,13 @@ from typing import Dict, List, Any, Optional
 # Modern imports
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
 from pydantic import BaseModel, Field  # Use Pydantic v2 directly
 
 from app.models.conversation import FactExtractionResult, ExtractedFact, Contradiction
 from app.services.memory import MemoryService
 from app.config import OLLAMA_BASE_URL, OLLAMA_MODEL
+
 
 # Define Pydantic models for the parser
 class FactSchema(BaseModel):
@@ -117,3 +118,43 @@ class IntelligenceService:
             print(f"Error extracting facts: {e}")
             # Return empty result on error
             return FactExtractionResult()
+        
+    async def summarize_conversation(self, conversation_id: str) -> str:
+        """Generate a summary of a conversation for future reference"""
+        # Get the conversation history
+        message_history = self.memory_service.get_message_history(conversation_id)
+        messages = message_history.messages
+        
+        # Format messages for the prompt
+        formatted_messages = []
+        for msg in messages:
+            if hasattr(msg, 'type') and msg.type == 'system':
+                continue  # Skip system messages
+            role = 'Student' if hasattr(msg, 'type') and msg.type == 'human' else 'Mentor'
+            formatted_messages.append(f"{role}: {msg.content}")
+        
+        conversation_text = "\n".join(formatted_messages)
+        
+        # Create the summarization prompt
+        prompt = PromptTemplate(
+            template="""
+            Below is a conversation between a student and an AI mentor.
+            Please provide a concise summary of the main topics discussed, any issues raised, 
+            and any actions or advice given.
+            
+            CONVERSATION:
+            {conversation}
+            
+            SUMMARY:
+            """,
+            input_variables=["conversation"]
+        )
+        
+        # Create and run the chain
+        chain = prompt | self.llm | StrOutputParser()
+        summary = await chain.ainvoke({"conversation": conversation_text})
+        
+        # Store the summary in the conversation document
+        await self.memory_service.update_conversation_summary(conversation_id, summary)
+        
+        return summary
