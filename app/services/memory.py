@@ -137,3 +137,30 @@ class MemoryService:
         if student and "facts" in student:
             return student["facts"]
         return {"academic": {}, "career": {}, "personal": {}}
+    
+    async def get_or_create_student_conversation(self, student_id: str) -> str:
+        """Get or create a single conversation thread for a student"""
+        # Look for existing conversation for this student
+        conversation = self.conversations.find_one({"student_id": student_id})
+        
+        if conversation:
+            # Return existing conversation ID
+            return str(conversation["_id"])
+        else:
+            # Create a new conversation for this student
+            conversation = {
+                "student_id": student_id,
+                "mentor_type": "primary",
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            }
+            result = self.conversations.insert_one(conversation)
+            conversation_id = str(result.inserted_id)
+            
+            # Create initial system message
+            message_history = self.get_message_history(conversation_id)
+            message_history.add_message(SystemMessage(
+                content="I am an AI mentor for undergraduate students, providing support in academics, career planning, and mental wellbeing."
+            ))
+            
+            return conversation_id  

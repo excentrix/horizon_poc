@@ -29,3 +29,9 @@ class Contradiction(BaseModel):
 class FactExtractionResult(BaseModel):
     extracted_facts: List[ExtractedFact] = []
     contradictions: List[Contradiction] = []
+    
+class StudentConversation(BaseModel):
+    student_id: str
+    messages: List[Message] = []
+    last_updated: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=datetime.now)

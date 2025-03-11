@@ -71,20 +71,23 @@ class MentorService:
         return chain
     
     async def respond_to_student(self, 
-                              student_id: str, 
-                              message: str, 
-                              conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+                           student_id: str, 
+                           message: str, 
+                           conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
         """Generate a streaming response to a student message"""
-        # Get or create conversation
+        # Get or create conversation using the unified approach
         if not conversation_id:
-            conversation_id = await self.memory_service.create_conversation(student_id)
+            conversation_id = await self.memory_service.get_or_create_student_conversation(student_id)
         
         # Store conversation_id in an instance variable
         self.last_conversation_id = conversation_id
         
         # Get student information to include in the prompt
         student = await self.memory_service.get_student(student_id)
-        student_info = f"STUDENT INFO:\n{json.dumps(student, default=str)}" if student else ""
+        student_facts = student.get("facts", {}) if student else {}
+        
+        # Format student context using the helper method
+        student_info = self._format_student_context(student, student_facts)
         
         # Get conversation history
         message_history = self.memory_service.get_message_history(conversation_id)
@@ -92,8 +95,16 @@ class MentorService:
         # Add the new message to history
         message_history.add_message(HumanMessage(content=message))
         
-        # Get all messages
+        # Get all messages - ENSURE WE HAVE ALL PREVIOUS MESSAGES
         history = message_history.messages
+        
+        # Apply token limit handling for very long conversations, but ensure context is preserved
+        history = self._handle_history_token_limit(history)
+        
+        # For debugging (remove in production)
+        print(f"Number of messages in history: {len(history)}")
+        for i, msg in enumerate(history):
+            print(f"Message {i}: {type(msg).__name__}: {msg.content[:30]}...")
         
         # Create streaming callback
         callback = StreamingCallback()
@@ -101,9 +112,10 @@ class MentorService:
         # Get the LLM with streaming
         llm, _ = self._create_ollama_llm(streaming=True)
         
-        # Create runnable using LCEL
+        # Create runnable using LCEL with explicit memory context
         prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content=PRIMARY_MENTOR_PROMPT + "\n\n" + student_info),
+            SystemMessage(content=PRIMARY_MENTOR_PROMPT + "\n\n" + student_info + 
+                        "\n\nIMPORTANT: You must reference previous parts of the conversation when relevant. You have full access to the conversation history."),
             MessagesPlaceholder(variable_name="history"),
             HumanMessage(content="{input}")
         ])
@@ -122,7 +134,7 @@ class MentorService:
                 config=config
             )
         )
-        
+            
         # Stream tokens as they're generated
         full_response = ""
         previous_token_count = 0
@@ -154,6 +166,61 @@ class MentorService:
         
         # Yield a special token to indicate the end and include the conversation ID
         yield f"<CONVERSATION_ID>{conversation_id}</CONVERSATION_ID>"
+        
+    def _format_student_context(self, student, student_facts):
+        """Format student information into a rich context for the LLM"""
+        if not student:
+            return ""
+            
+        context = f"""
+        STUDENT PROFILE:
+        Name: {student.get('name', 'Unknown')}
+        University: {student.get('university', 'Unknown')}
+        Program: {student.get('program', 'Unknown')}
+        Year: {student.get('year', 'Unknown')}
+        """
+        
+        # Add facts if available
+        if student_facts:
+            # Academic facts
+            if "academic" in student_facts and student_facts["academic"]:
+                context += "\nACADEMIC INFORMATION:\n"
+                for key, value in student_facts["academic"].items():
+                    fact_value = value.get('value', value) if isinstance(value, dict) else value
+                    context += f"- {key.replace('_', ' ').title()}: {fact_value}\n"
+            
+            # Career facts
+            if "career" in student_facts and student_facts["career"]:
+                context += "\nCAREER INFORMATION:\n"
+                for key, value in student_facts["career"].items():
+                    fact_value = value.get('value', value) if isinstance(value, dict) else value
+                    context += f"- {key.replace('_', ' ').title()}: {fact_value}\n"
+            
+            # Personal facts
+            if "personal" in student_facts and student_facts["personal"]:
+                context += "\nPERSONAL INFORMATION:\n"
+                for key, value in student_facts["personal"].items():
+                    fact_value = value.get('value', value) if isinstance(value, dict) else value
+                    context += f"- {key.replace('_', ' ').title()}: {fact_value}\n"
+                    
+        return context
+    
+    def _handle_history_token_limit(self, history):
+        """Handle potential token limitations for very long conversation histories"""
+        # If history is short enough, return all of it
+        if len(history) < 30:  # Increased from 20 to ensure enough context
+            return history
+            
+        # Otherwise, keep system message, early context, and most recent messages
+        system_messages = [msg for msg in history if isinstance(msg, SystemMessage)]
+        non_system = [msg for msg in history if not isinstance(msg, SystemMessage)]
+        
+        # Keep first few messages for context and most recent messages
+        early_context = non_system[:3]  # Keep first 3 messages for context
+        recent_messages = non_system[-20:]  # Keep last 20 messages
+        
+        # Return system messages plus context messages plus recent messages
+        return system_messages + early_context + recent_messages
         
     async def get_last_conversation_id(self) -> str:
         """Get the ID of the last conversation used"""
